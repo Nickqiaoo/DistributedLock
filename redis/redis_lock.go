@@ -79,6 +79,7 @@ func (l *RedisLock) expire() {
 			if res, err := conn.Do("DEL", l.name); err != nil {
 				log.Println(res)
 			}
+			l.redis.Close()
 			return
 		case t := <-ticker.C:
 			conn := l.redis.Get()

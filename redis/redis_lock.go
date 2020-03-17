@@ -8,10 +8,20 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
+const(
+    LUA_SCRIPT = `
+	if redis.call("get",KEYS[1]) == ARGV[1] then
+    	return redis.call("del",KEYS[1])
+	else
+    	return 0
+	end`
+)
+
 //RedisLock impl DistributedLock
 type RedisLock struct {
 	redis   *redis.Pool
 	name    string
+	value   int64
 	timeout int64
 	stop    chan bool
 	get     chan bool
@@ -76,7 +86,8 @@ func (l *RedisLock) expire() {
 			log.Println("UnLock")
 			conn := l.redis.Get()
 			defer conn.Close()
-			if res, err := conn.Do("DEL", l.name); err != nil {
+			script := redis.NewScript(1, LUA_SCRIPT)
+			if res, err := script.Do(conn, l.name, l.value); err != nil {
 				log.Println(res)
 			}
 			l.redis.Close()

@@ -10,6 +10,8 @@ import (
 //EtcdLock impl DistributedLock
 type EtcdLock struct {
 	etcd    *clientv3.Client
+	txn     clientv3.Txn
+	leaseID clientv3.LeaseID
 	name    string
 	timeout int64
 	stop    chan bool
@@ -19,28 +21,28 @@ type EtcdLock struct {
 
 //Lock get lock
 func (l *EtcdLock) Lock() <-chan bool {
-	txn := clientv3.NewKV(l.etcd).Txn(context.TODO())
+	l.txn = clientv3.NewKV(l.etcd).Txn(context.TODO())
 	lease := clientv3.NewLease(l.etcd)
 	leaseResp, err := lease.Grant(context.TODO(), l.timeout)
 	if err != nil {
 		log.Println(err)
 		return l.get
 	}
-	leaseID := leaseResp.ID
+	l.leaseID = leaseResp.ID
 	ctx, cancel := context.WithCancel(context.TODO())
 	l.cancel = cancel
-	go l.leaseKeepAlive(ctx, leaseID, lease)
+	go l.leaseKeepAlive(ctx, l.leaseID, lease)
 
-	txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
-		Then(clientv3.OpPut(l.name, "", clientv3.WithLease(leaseID))).
+	l.txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
+		Then(clientv3.OpPut(l.name, "", clientv3.WithLease(l.leaseID))).
 		Else()
-	txnResp, err := txn.Commit()
+	txnResp, err := l.txn.Commit()
 	if err != nil {
 		log.Println(err)
 		return l.get
 	}
 	if !txnResp.Succeeded {
-		go l.watchLock()
+		go l.watchLock(ctx)
 	} else {
 		l.get <- true
 	}
@@ -71,25 +73,22 @@ func (l *EtcdLock) leaseKeepAlive(ctx context.Context, leaseID clientv3.LeaseID,
 	}
 }
 
-func (l *EtcdLock) watchLock() {
-	ch := l.etcd.Watch(context.TODO(), l.name)
+func (l *EtcdLock) watchLock(ctx context.Context) {
+	ch := l.etcd.Watch(ctx, l.name)
 
-	for {
-		select {
-		case res := <-ch:
-			for _, ev := range res.Events {
-				if ev.Type == clientv3.EventTypeDelete {
-					txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
-						Then(clientv3.OpPut(l.name, "", clientv3.WithLease(leaseID))).
-						Else()
-					txnResp, err := txn.Commit()
-					if err != nil {
-						log.Println(err)
-					}
-					if txnResp.Succeeded {
-						l.get <- true
-						return
-					}
+	for res := range ch {
+		for _, ev := range res.Events {
+			if ev.Type == clientv3.EventTypeDelete {
+				l.txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
+					Then(clientv3.OpPut(l.name, "", clientv3.WithLease(l.leaseID))).
+					Else()
+				txnResp, err := l.txn.Commit()
+				if err != nil {
+					log.Println(err)
+				}
+				if txnResp.Succeeded {
+					l.get <- true
+					return
 				}
 			}
 		}

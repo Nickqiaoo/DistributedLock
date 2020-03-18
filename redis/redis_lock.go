@@ -70,6 +70,8 @@ func (l *RedisLock) check() {
 				return
 			}
 			log.Println("Current time: ", t)
+		case <-l.stop:
+			return
 		}
 	}
 }

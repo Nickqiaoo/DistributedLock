@@ -9,11 +9,11 @@ import (
 // Conf config
 var (
 	confPath string
-	Conf     *Redis
+	Conf     *Config
 )
 
 func init() {
-	flag.StringVar(&confPath, "conf", "redis-example.toml", "default config path")
+	flag.StringVar(&confPath, "conf", "lock-example.toml", "default config path")
 }
 
 // Init init config.
@@ -32,6 +32,12 @@ func (d *duration) UnmarshalText(text []byte) error {
 	return err
 }
 
+// Config is lock config.
+type Config struct {
+	Redis *Redis
+	Etcd  *Etcd
+}
+
 // Redis .
 type Redis struct {
 	Network      string
@@ -43,5 +49,10 @@ type Redis struct {
 	ReadTimeout  duration
 	WriteTimeout duration
 	IdleTimeout  duration
-	Expire       duration
+}
+
+// Etcd .
+type Etcd struct {
+	Addr         []string
+	DialTimeout  duration
 }

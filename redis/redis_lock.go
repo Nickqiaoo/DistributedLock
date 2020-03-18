@@ -3,6 +3,7 @@ package redislock
 import (
 	"DistirbutedLock/conf"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -31,9 +32,10 @@ type RedisLock struct {
 func (l *RedisLock) Lock() <-chan bool {
 	conn := l.redis.Get()
 	defer conn.Close()
-	var res int64
+	var res int
 	var err error
-	if res, err = redis.Int64(conn.Do("SETNX", l.name, time.Now().Unix()+l.timeout)); err != nil {
+	l.value = rand.Int63()
+	if res, err = redis.Int(conn.Do("SET", l.name, l.value, "NX", "PX", l.timeout)); err != nil {
 		log.Println(res)
 	}
 	if res == 1 {
@@ -58,19 +60,14 @@ func (l *RedisLock) check() {
 		case t := <-ticker.C:
 			conn := l.redis.Get()
 			defer conn.Close()
-			var res int64
+			var res int
 			var err error
-			if res, err = redis.Int64(conn.Do("GET", l.name)); err != nil {
+			if res, err = redis.Int(conn.Do("SET", l.name, l.value, "NX", "PX", l.timeout)); err != nil {
 				log.Println(res)
 			}
-			if err == redis.ErrNil || res < time.Now().Unix(){
-				if res, err = redis.Int64(conn.Do("GETSET", l.name, time.Now().Unix()+l.timeout)); err != nil {
-					log.Println(res)
-				}
-				if err == redis.ErrNil || res < time.Now().Unix(){
-					l.get <- true
-					return
-				}
+			if res == 1 {
+				l.get <- true
+				return
 			}
 			log.Println("Current time: ", t)
 		}
@@ -78,7 +75,7 @@ func (l *RedisLock) check() {
 }
 
 func (l *RedisLock) expire() {
-	ticker := time.NewTicker(time.Duration(l.timeout/2) * time.Second)
+	ticker := time.NewTicker(time.Duration(l.timeout/2) * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
@@ -95,7 +92,7 @@ func (l *RedisLock) expire() {
 		case t := <-ticker.C:
 			conn := l.redis.Get()
 			defer conn.Close()
-			if res, err := conn.Do("SET", l.name, time.Now().Unix() + l.timeout); err != nil {
+			if res, err := conn.Do("PEXPIRE", l.name, l.timeout); err != nil {
 				log.Println(res)
 			}
 			log.Println("Current time: ", t)

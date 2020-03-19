@@ -8,3 +8,8 @@
     writeTimeout = "500ms"
     idleTimeout = "120s"
     expire = "30m"
+[etcd]
+    addr = ["127.0.0.1:2379","127.0.0.1:3379","127.0.0.1:4379"]
+    dialTimeout = "200ms"
+[zk]
+

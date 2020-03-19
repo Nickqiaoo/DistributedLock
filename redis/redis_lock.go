@@ -5,12 +5,11 @@ import (
 	"log"
 	"math/rand"
 	"time"
-
 	"github.com/gomodule/redigo/redis"
 )
 
-const(
-    LUA_SCRIPT = `
+const (
+	luaScript = `
 	if redis.call("get",KEYS[1]) == ARGV[1] then
     	return redis.call("del",KEYS[1])
 	else
@@ -85,7 +84,7 @@ func (l *RedisLock) expire() {
 			log.Println("UnLock")
 			conn := l.redis.Get()
 			defer conn.Close()
-			script := redis.NewScript(1, LUA_SCRIPT)
+			script := redis.NewScript(1, luaScript)
 			if res, err := script.Do(conn, l.name, l.value); err != nil {
 				log.Println(res)
 			}
@@ -121,5 +120,10 @@ func newRedisLock(c *conf.Redis) *RedisLock {
 				return conn, nil
 			},
 		},
+		name:    "lock",
+		value:   rand.Int63(),
+		timeout: 100,
+		stop:    make(chan bool, 1),
+		get:     make(chan bool, 1),
 	}
 }

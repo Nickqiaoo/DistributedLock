@@ -56,3 +56,9 @@ type Etcd struct {
 	Addr         []string
 	DialTimeout  duration
 }
+
+// Zk .
+type Zk struct {
+	Addr         []string
+	DialTimeout  duration
+}

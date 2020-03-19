@@ -10,7 +10,6 @@ import (
 //EtcdLock impl DistributedLock
 type EtcdLock struct {
 	etcd    *clientv3.Client
-	txn     clientv3.Txn
 	leaseID clientv3.LeaseID
 	name    string
 	timeout int64
@@ -21,11 +20,12 @@ type EtcdLock struct {
 
 //Lock get lock
 func (l *EtcdLock) Lock() <-chan bool {
-	l.txn = clientv3.NewKV(l.etcd).Txn(context.TODO())
+	txn := clientv3.NewKV(l.etcd).Txn(context.TODO())
 	lease := clientv3.NewLease(l.etcd)
 	leaseResp, err := lease.Grant(context.TODO(), l.timeout)
 	if err != nil {
-		log.Println(err)
+		log.Println("lease grant:", err)
+		l.get <- false
 		return l.get
 	}
 	l.leaseID = leaseResp.ID
@@ -33,17 +33,19 @@ func (l *EtcdLock) Lock() <-chan bool {
 	l.cancel = cancel
 	go l.leaseKeepAlive(ctx, l.leaseID, lease)
 
-	l.txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
-		Then(clientv3.OpPut(l.name, "", clientv3.WithLease(l.leaseID))).
-		Else()
-	txnResp, err := l.txn.Commit()
+	txnResp, err := txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
+		Then(clientv3.OpPut(l.name, "test", clientv3.WithLease(l.leaseID))).
+		Else().Commit()
 	if err != nil {
-		log.Println(err)
+		log.Println("txn:", err)
+		l.get <- false
 		return l.get
 	}
 	if !txnResp.Succeeded {
+		log.Println("txnResp:", txnResp.Succeeded)
 		go l.watchLock(ctx)
 	} else {
+		log.Println("lock success")
 		l.get <- true
 	}
 	return l.get
@@ -51,23 +53,26 @@ func (l *EtcdLock) Lock() <-chan bool {
 
 //UnLock release lock
 func (l *EtcdLock) UnLock() {
-	l.cancel()
+	log.Println("unlock")
+	if l.cancel != nil {
+		l.cancel()
+	}
 	l.stop <- true
-
 }
 
 func (l *EtcdLock) leaseKeepAlive(ctx context.Context, leaseID clientv3.LeaseID, lease clientv3.Lease) {
 	ch, err := lease.KeepAlive(ctx, leaseID)
 	if err != nil {
-		log.Println(err)
+		log.Println("lease keepalive:", err)
 	} else {
 		for {
 			select {
 			case <-l.stop:
 				if _, err := lease.Revoke(context.TODO(), leaseID); err != nil {
-					log.Println(err)
+					log.Println("lease revoke", err)
 				}
-			case <-ch:
+			case res := <-ch:
+				log.Println("keepalive res:", res)
 			}
 		}
 	}
@@ -77,18 +82,23 @@ func (l *EtcdLock) watchLock(ctx context.Context) {
 	ch := l.etcd.Watch(ctx, l.name)
 
 	for res := range ch {
+		log.Println("watch res:", res)
 		for _, ev := range res.Events {
+			log.Println("events:", ev)
 			if ev.Type == clientv3.EventTypeDelete {
-				l.txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
-					Then(clientv3.OpPut(l.name, "", clientv3.WithLease(l.leaseID))).
-					Else()
-				txnResp, err := l.txn.Commit()
+				txn := clientv3.NewKV(l.etcd).Txn(context.TODO())
+				txnResp, err := txn.If(clientv3.Compare(clientv3.CreateRevision(l.name), "=", 0)).
+					Then(clientv3.OpPut(l.name, "test", clientv3.WithLease(l.leaseID))).
+					Else().Commit()
 				if err != nil {
-					log.Println(err)
+					l.get <- false
+					log.Println("txn:", err)
 				}
 				if txnResp.Succeeded {
 					l.get <- true
 					return
+				} else {
+					log.Println("txnResp:", txnResp.Succeeded)
 				}
 			}
 		}
@@ -102,9 +112,13 @@ func NewEtcdLock(c *conf.Etcd) *EtcdLock {
 		DialTimeout: c.DialTimeout.Duration,
 	})
 	if err != nil {
-		log.Println(err)
+		log.Println("create:", err)
 	}
 	return &EtcdLock{
-		etcd: client,
+		etcd:    client,
+		name:    "lock",
+		timeout: 100,
+		get:     make(chan bool, 1),
+		stop:    make(chan bool, 1),
 	}
 }

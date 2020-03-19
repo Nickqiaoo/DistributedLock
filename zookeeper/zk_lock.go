@@ -1,10 +1,13 @@
 package zklock
 
+import (
+	"DistirbutedLock/conf"
+	"github.com/samuel/go-zookeeper/zk"
+)
+
 //ZkLock impl DistributedLock
 type ZkLock struct {
-	etcd    *clientv3.Client
-	txn     clientv3.Txn
-	leaseID clientv3.LeaseID
+	zk      *zk.conn
 	name    string
 	timeout int64
 	stop    chan bool
@@ -12,3 +15,23 @@ type ZkLock struct {
 	cancel  context.CancelFunc
 }
 
+//Lock get lock
+func (l *ZkLock) Lock() <-chan bool {
+	lock:=zk.NewLock(l.zk,"/lock")
+	lock.Lock()
+}
+
+//NewZkLock create zklock
+func NewZkLock(c *conf.Zk) *ZkLock {
+	client, _, err := zk.Connect(c.Addr, c.DialTimeout)
+	if err != nil {
+		panic(err)
+	}
+	return &ZkLock{
+		zk:      client,
+		name:    "lock",
+		timeout: 100,
+		get:     make(chan bool, 1),
+		stop:    make(chan bool, 1),
+	}
+}

@@ -1,18 +1,3 @@
----
-title: 分布式锁的几种实现方式
-date: 2020-03-17 22:00:00
-toc: true
-tags: 
-- redis
-- 分布式
-categories: 
-- 分布式
-permalink: distributed-lock
----
-
-分布式锁作为一种多机间的同步手段在分布式环境下应用广泛，这篇文章分别用redis，etcd，zookeepr讨论一下如何实现分布式锁。
-
-<!-- more -->
 
 ## 接口设计
 

@@ -13,7 +13,6 @@ type EtcdLock struct {
 	leaseID clientv3.LeaseID
 	name    string
 	timeout int64
-	stop    chan bool
 	get     chan bool
 	cancel  context.CancelFunc
 }
@@ -43,7 +42,7 @@ func (l *EtcdLock) Lock() <-chan bool {
 	}
 	if !txnResp.Succeeded {
 		log.Println("txnResp:", txnResp.Succeeded)
-		go l.watchLock(ctx)
+		go l.watchLock(ctx, txnResp.Header.GetRevision())
 	} else {
 		log.Println("lock success")
 		l.get <- true
@@ -57,7 +56,6 @@ func (l *EtcdLock) UnLock() {
 	if l.cancel != nil {
 		l.cancel()
 	}
-	l.stop <- true
 }
 
 func (l *EtcdLock) leaseKeepAlive(ctx context.Context, leaseID clientv3.LeaseID, lease clientv3.Lease) {
@@ -65,21 +63,18 @@ func (l *EtcdLock) leaseKeepAlive(ctx context.Context, leaseID clientv3.LeaseID,
 	if err != nil {
 		log.Println("lease keepalive:", err)
 	} else {
-		for {
-			select {
-			case <-l.stop:
-				if _, err := lease.Revoke(context.TODO(), leaseID); err != nil {
-					log.Println("lease revoke", err)
-				}
-			case res := <-ch:
-				log.Println("keepalive res:", res)
-			}
+		for res := range ch {
+			log.Println("keepalive res:", res)
 		}
+	}
+	//cancel后ch被关闭，释放lease
+	if _, err := lease.Revoke(context.TODO(), leaseID); err != nil {
+		log.Println("revoke err:", err)
 	}
 }
 
-func (l *EtcdLock) watchLock(ctx context.Context) {
-	ch := l.etcd.Watch(ctx, l.name)
+func (l *EtcdLock) watchLock(ctx context.Context, revision int64) {
+	ch := l.etcd.Watch(ctx, l.name, clientv3.WithRev(revision + 1))
 
 	for res := range ch {
 		log.Println("watch res:", res)
@@ -119,6 +114,5 @@ func NewEtcdLock(c *conf.Etcd) *EtcdLock {
 		name:    "lock",
 		timeout: 100,
 		get:     make(chan bool, 1),
-		stop:    make(chan bool, 1),
 	}
 }
